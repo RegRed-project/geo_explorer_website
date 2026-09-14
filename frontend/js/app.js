@@ -109,4 +109,5 @@ async function runQuery() {
 }
 
 el("query_btn").addEventListener("click", runQuery);
-loadTables();
+el("table_name").addEventListener("change", runQuery);
+loadTables().then(runQuery);
