@@ -1,3 +1,6 @@
 147-251-255-246.sslip.io {
+	tls {
+		key_type rsa2048
+	}
 	reverse_proxy fastapi:8000
 }

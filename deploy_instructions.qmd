@@ -1,0 +1,415 @@
+---
+title: "Deployment Instructions — Geo Explorer"
+subtitle: "FastAPI/DuckDB backend on a VPS + static frontend on GitHub Pages"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    page-layout: article
+---
+
+## Architecture
+
+A FastAPI + DuckDB API runs in Docker on a VPS (behind Caddy for HTTPS),
+**built directly on that VPS** — no container registry, no self-hosted
+GitHub Actions runner, no CI permissions to fight with. The static frontend
+(HTML/CSS/vanilla JS + Leaflet) is served from GitHub Pages and calls the
+API over `fetch()`.
+
+::: {.callout-important}
+## Read this before following an older copy of these instructions
+An earlier design `COPY`-ed the 17GB `.duckdb` file into the Docker image
+(with a separate data image pushed to GHCR, built on a self-hosted Actions
+runner). **That approach was abandoned** — on this VPS's disk it took
+close to an hour per build, doubled disk usage to ~35GB for one file (a
+raw copy plus a duplicate baked into the build cache), and once nearly
+filled the disk on a box that also runs a production Postgres instance.
+
+The corrected design **bind-mounts** the `.duckdb` file into the container
+instead. The image build only ever touches app code and takes seconds;
+updating data never requires a rebuild, and the file exists on disk
+exactly once.
+:::
+
+Concrete values wired into the repo:
+
+| Thing | Value |
+|---|---|
+| GitHub org/repo | `RegRed-project/geo_explorer_website` (note: renamed from `regred-project` mid-project — GitHub redirects, but update the git remote to avoid the redirect notice) |
+| Pages URL | `https://regred-project.github.io/geo_explorer_website/` |
+| VPS public IP | `147.251.255.246` |
+| API hostname (via sslip.io, no DNS setup needed) | `147-251-255-246.sslip.io` |
+
+If any of these change, update: `backend/Caddyfile`, `frontend/js/app.js`
+(`API_BASE`), `backend/app/main.py` (`allow_origins`), and the default host
+in `deploy.sh`.
+
+## 1. One-time: create the GitHub repo
+
+```bash
+git remote add origin git@github.com:RegRed-project/geo_explorer_website.git
+git add .
+git commit -m "Initial FastAPI + static frontend setup"
+git push -u origin main
+```
+
+::: {.callout-warning}
+## Gotchas that actually came up here
+- **GPG commit signing needs a real TTY.** If `git commit` fails with
+  `gpg: signing failed: No passphrase given` or `gpg: cannot open '/dev/tty'`,
+  run `export GPG_TTY=$(tty)` first, or (if signing truly can't work in your
+  shell) commit with `git commit --no-gpg-sign` for that one commit.
+- **GitHub blocks pushes that expose a private email (`GH007`).** If your
+  account has "Block command line pushes that expose my email" enabled and
+  your commit author uses your real email, the push is rejected. Fix by
+  setting a repo-local git identity to your GitHub-provided noreply address
+  before committing:
+  ```bash
+  git config user.email "<id>+<username>@users.noreply.github.com"
+  git commit --amend --reset-author --no-edit --no-gpg-sign
+  ```
+  (find your exact noreply address at <https://github.com/settings/emails>).
+- **If the remote already has commits that don't match local history**
+  (e.g. you committed the old GHCR-based design and pushed it before this
+  redesign), a normal push is rejected as non-fast-forward. Force-push
+  deliberately once you're sure:
+  ```bash
+  git push --force-with-lease origin main
+  ```
+:::
+
+In the repo: **Settings → Pages → Source → "GitHub Actions"**. This is
+required — the `deploy-frontend.yml` workflow will run and even succeed
+without it configured, but the site itself stays a 404 until Pages is
+explicitly turned on this way.
+
+::: {.callout-warning}
+## Also check this if under an org
+If pushes/workflows behave oddly (e.g. `GITHUB_TOKEN` can't push packages,
+or Actions never trigger), the org may have Actions locked down by default:
+check **Settings → Actions → General → Actions permissions** (must allow
+workflows to run) and **Workflow permissions**. If "Read and write
+permissions" is greyed out (common under an org), don't wait on an org
+owner — see the GHCR note in the backend section below; for this project's
+final design, no registry write access is needed at all, which sidesteps
+the problem entirely.
+:::
+
+## 2. One-time: prepare the VPS (147.251.255.246)
+
+SSH in and install Docker + the Compose plugin:
+
+```bash
+ssh gortega@147.251.255.246
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # log out/in after this
+```
+
+Create the deploy directory, owned by your user (`/opt` is root-owned by
+default — this bit people the first time):
+
+```bash
+sudo mkdir -p /opt/geo-explorer
+sudo chown $USER:$USER /opt/geo-explorer
+```
+
+Back on your machine, set up key-based SSH so `deploy.sh` doesn't prompt
+for a password every time:
+
+```bash
+ssh-copy-id gortega@147.251.255.246
+```
+
+::: {.callout-important}
+## Two separate firewalls, not one
+Opening ports on the VPS's own OS firewall is **not** sufficient on cloud
+infrastructure — there is usually also a cloud-level security group in
+front of it, and both must allow inbound TCP 80/443 from `0.0.0.0/0`
+(the whole internet, not just "my IP", which is a common console default
+and will still block Let's Encrypt's validation servers even though it
+looks open from your own machine).
+
+```bash
+# OS-level firewall (if ufw is in use)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+```
+
+Then, separately, check the cloud provider's console for a security group
+/ network firewall on the VM and open TCP 80 and 443 there too, source
+`0.0.0.0/0`.
+
+**How this actually failed here**: after opening only what looked
+sufficient, `curl` to the hostname timed out on both 80 and 443, while
+`docker`/`caddy` on the box were confirmed listening (`ss -tlnp`). Testing
+against the **raw IP** (bypassing a `sslip.io`-specific local network
+filter that was a red herring) confirmed port 80 worked once the cloud
+security group was actually opened to `0.0.0.0/0`.
+:::
+
+## 3. Deploy the backend
+
+From the repo root, with `geographic_entities_prepared.duckdb` present on
+disk (it's gitignored — it just needs to exist locally):
+
+```bash
+./deploy.sh
+```
+
+This does everything:
+
+1. `rsync`s the repo to `/opt/geo-explorer` on the VPS (excludes `.git` and
+   `frontend/`). rsync only re-transfers the `.duckdb` file if its content
+   actually changed, so routine code-only deploys are fast (seconds).
+2. SSHes in and runs `docker compose up -d --build`, which builds the
+   (now tiny, code-only) `backend/Dockerfile` image and (re)starts both
+   the `fastapi` and `caddy` containers. The data file is bind-mounted,
+   not copied, so this step no longer touches the 17GB file at all.
+
+Run `./deploy.sh` again any time you change backend code or the data file.
+Pass a different target if needed: `./deploy.sh otheruser@otherhost`.
+
+::: {.callout-tip}
+## What changed from the original design
+`backend/Dockerfile` no longer has a `COPY` step for the `.duckdb` file.
+`docker-compose.yml`'s `fastapi` service instead has:
+```yaml
+volumes:
+  - ./geographic_entities_prepared.duckdb:/data/geographic_entities_prepared.duckdb:ro
+```
+`backend/app/config.py`'s `DB_PATH` already pointed at
+`/data/geographic_entities_prepared.duckdb`, so no app code changed —
+only how that path gets populated inside the container.
+:::
+
+### If a build/rsync is ever interrupted mid-way
+
+Docker build cache from an aborted attempt can accumulate quickly with
+large layers. If disk fills up:
+
+```bash
+ssh gortega@147.251.255.246 'docker builder prune -af && df -h /'
+```
+
+Also check for stale duplicates of the data file left over from earlier
+manual attempts (e.g. inside `backend/` instead of the repo root) — the
+current Dockerfile only ever reads
+`geographic_entities_prepared.duckdb` at the repo root.
+
+## 4. TLS certificate notes
+
+Caddy obtains a Let's Encrypt certificate for `147-251-255-246.sslip.io`
+automatically on first start — no DNS setup needed, since `sslip.io`
+already resolves that hostname to the VPS's own IP.
+
+::: {.callout-warning}
+## If certificate issuance stalls or the chain fails to verify for some clients
+- If ports were closed when Caddy first tried and it's now sitting in a
+  retry backoff (Caddy logs `will retry ... retrying_in: <n>`), don't wait
+  it out — force an immediate retry: `docker compose restart caddy`.
+- Caddy's default certificate is **ECDSA**, chaining through a newer
+  Let's Encrypt root. Every modern browser trusts it, but some
+  older/vendored CA bundles (used by some non-browser HTTP clients) don't
+  yet. For maximum compatibility this project forces RSA instead, in
+  `backend/Caddyfile`:
+  ```
+  147-251-255-246.sslip.io {
+      tls {
+          key_type rsa2048
+      }
+      reverse_proxy fastapi:8000
+  }
+  ```
+  Changing this setting does **not** retroactively reissue an
+  already-valid cached certificate. Force reissuance by deleting the
+  cached cert and restarting:
+  ```bash
+  docker compose exec caddy rm -rf \
+    "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/147-251-255-246.sslip.io"
+  docker compose restart caddy
+  ```
+- To sanity-check the served chain independent of any network weirdness,
+  check from the VPS itself over loopback:
+  ```bash
+  echo | openssl s_client -connect localhost:443 -servername 147-251-255-246.sslip.io \
+    2>&1 | grep -E "^Certificate chain|^ [0-9]+ s:|Verify return code"
+  ```
+  `Verify return code: 0 (ok)` means the chain is genuinely fine, even if
+  a specific test client elsewhere fails to validate it.
+:::
+
+## 5. Deploy the frontend
+
+Push to `main` with changes under `frontend/` — `deploy-frontend.yml`
+publishes `frontend/` to GitHub Pages automatically. No build step, no
+secrets, runs on a standard hosted runner.
+
+Confirm it actually deployed (not just that the workflow ran):
+
+```bash
+curl -s https://api.github.com/repos/RegRed-project/geo_explorer_website/pages
+```
+
+A `404` here means Pages was never turned on in Settings (see step 1) —
+the workflow can report success while this still 404s, so check both.
+
+## 6. Verify end-to-end
+
+```bash
+# API is reachable and has a valid cert
+curl https://147-251-255-246.sslip.io/api/tables
+
+# CORS is configured for the Pages origin
+curl -I -H "Origin: https://regred-project.github.io" \
+  https://147-251-255-246.sslip.io/api/tables | grep -i access-control
+
+# Full site
+open https://regred-project.github.io/geo_explorer_website/
+```
+
+In the browser: pick a table, filter to a single row, and confirm the
+table and the Leaflet map both render.
+
+::: {.callout-note}
+## If your own `curl`/tooling can't validate the cert but a browser can
+This happened during development: a local institutional network was
+running SSL inspection (a Fortinet appliance presenting its own MITM
+certificate for the `sslip.io` domain specifically), and a separate
+automated fetch tool had an outdated root-certificate bundle missing the
+current Let's Encrypt root. Both gave misleading failures despite the
+server being correctly configured (confirmed via `openssl s_client`
+loopback on the VPS itself, per step 4). If in doubt, trust a real
+browser's judgment over a CLI tool's, and verify server-side via loopback
+before assuming the deployment is broken.
+:::
+
+## Updating the data later
+
+1. Replace `geographic_entities_prepared.duckdb` locally with the new
+   version.
+2. `./deploy.sh`
+
+The new file gets rsynced up and the container picks it up on restart —
+no image rebuild needed for data alone.
+
+## Troubleshooting summary
+
+- **`./deploy.sh` hangs or asks for a password every time**: SSH key auth
+  isn't set up — rerun `ssh-copy-id gortega@147.251.255.246`.
+- **Build/deploy is extremely slow or disk fills up**: confirm you're on
+  the bind-mount design (§3), not an older `COPY`-the-file-into-the-image
+  version — that design was abandoned for exactly this reason.
+- **Caddy cert fails to issue / times out**: check *both* the OS firewall
+  and the cloud provider's security group for ports 80/443, open to
+  `0.0.0.0/0` (§2). If ports were fixed after Caddy already tried and
+  failed, `docker compose restart caddy` to retry immediately instead of
+  waiting for its backoff timer.
+- **A cert seems invalid to some client but not others**: verify server-side
+  via `openssl s_client` loopback (§4) before assuming it's actually
+  broken — client-side CA bundles and local network SSL inspection can
+  both produce false negatives.
+- **CORS errors in the browser console**: the `Origin` header the browser
+  sends must exactly match an entry in `allow_origins` in
+  `backend/app/main.py` (scheme + host only, no path) — run `./deploy.sh`
+  again after changing it.
+- **GitHub Pages shows a 404**: confirm Settings → Pages → Source is set
+  to "GitHub Actions" (§1) — a green `deploy-frontend.yml` run does not by
+  itself mean Pages is turned on; check
+  `curl https://api.github.com/repos/<org>/<repo>/pages` for a 404.
+- **`git push` rejected (email privacy / GH007, or non-fast-forward)**:
+  see the callout in §1.
+
+## Reference: the files that make this work
+
+`deploy.sh` (repo root, executable):
+
+```bash
+#!/usr/bin/env bash
+# Deploys the backend to the VPS: syncs the repo, then builds and restarts
+# the containers over SSH. No GitHub Actions, no container registry.
+#
+# Usage: ./deploy.sh [user@host]
+# Defaults to VPS_HOST below if no argument is given.
+set -euo pipefail
+
+VPS="${1:-gortega@147.251.255.246}"
+REMOTE_DIR="/opt/geo-explorer"
+
+echo "==> Syncing repo to $VPS:$REMOTE_DIR (the .duckdb file only re-transfers if it changed)"
+rsync -avz --info=progress2 \
+  --exclude '.git' \
+  --exclude 'frontend' \
+  --exclude '__pycache__' \
+  ./ "$VPS:$REMOTE_DIR/"
+
+echo "==> Building and restarting containers on $VPS"
+ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build"
+
+echo "==> Done. Check: curl https://147-251-255-246.sslip.io/api/tables"
+```
+
+`docker-compose.yml` (repo root):
+
+```yaml
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - ./geographic_entities_prepared.duckdb:/data/geographic_entities_prepared.duckdb:ro
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./backend/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - fastapi
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+`backend/Dockerfile`:
+
+```dockerfile
+# Built directly on the VPS (docker compose build) — no registry involved.
+# Build context is the repo root (see ../docker-compose.yml), so paths below
+# are relative to the repo root, not this file's directory.
+#
+# The .duckdb file is NOT copied into the image — it's bind-mounted at
+# runtime (see docker-compose.yml). That keeps the image small and the
+# build fast/instant regardless of data size, and means updating the data
+# never requires a rebuild, just a container restart.
+FROM python:3.12-slim
+WORKDIR /srv
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/app/ ./app/
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+`backend/Caddyfile`:
+
+```
+147-251-255-246.sslip.io {
+	tls {
+		key_type rsa2048
+	}
+	reverse_proxy fastapi:8000
+}
+```

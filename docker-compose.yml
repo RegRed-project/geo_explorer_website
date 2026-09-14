@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    volumes:
+      - ./geographic_entities_prepared.duckdb:/data/geographic_entities_prepared.duckdb:ro
 
   caddy:
     image: caddy:2-alpine
