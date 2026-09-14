@@ -1,0 +1,17 @@
+# Data (too large for git; shipped via the data Docker image instead)
+*.duckdb
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Quarto / old Shiny app build artifacts (retired stack)
+.quarto/
+_site/
+_site (2)/
+index_files/
+logs/
+
+# Editors / OS
+.DS_Store

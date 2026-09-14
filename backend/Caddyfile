@@ -1,0 +1,3 @@
+147-251-255-246.sslip.io {
+	reverse_proxy fastapi:8000
+}
