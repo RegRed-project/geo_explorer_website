@@ -1,4 +1,4 @@
-147-251-255-246.sslip.io {
+geo-explorer.geomattr.org {
 	tls {
 		key_type rsa2048
 	}

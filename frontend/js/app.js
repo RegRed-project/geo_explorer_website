@@ -1,4 +1,4 @@
-const API_BASE = "https://147-251-255-246.sslip.io";
+const API_BASE = "https://geo-explorer.geomattr.org";
 
 const el = (id) => document.getElementById(id);
 let map = null;

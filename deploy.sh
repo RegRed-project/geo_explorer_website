@@ -19,4 +19,4 @@ rsync -avz --info=progress2 \
 echo "==> Building and restarting containers on $VPS"
 ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build"
 
-echo "==> Done. Check: curl https://147-251-255-246.sslip.io/api/tables"
+echo "==> Done. Check: curl https://geo-explorer.geomattr.org/api/tables"
