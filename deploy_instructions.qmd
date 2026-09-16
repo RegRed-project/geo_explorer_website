@@ -29,6 +29,14 @@ The corrected design **bind-mounts** the `.duckdb` file into the container
 instead. The image build only ever touches app code and takes seconds;
 updating data never requires a rebuild, and the file exists on disk
 exactly once.
+
+Also: the API originally lived at `147-251-255-246.sslip.io` (a magic-DNS
+service needing zero setup). That was replaced with a real domain,
+`geo-explorer.geomattr.org`, because `sslip.io` is categorized as
+"Dynamic DNS" by common corporate/campus web filters (a FortiGate
+appliance here) and got silently blocked on any network running that
+filter — see the callout in §4 for the full story, which is still worth
+reading since the debugging technique generalizes.
 :::
 
 Concrete values wired into the repo:
@@ -38,7 +46,7 @@ Concrete values wired into the repo:
 | GitHub org/repo | `RegRed-project/geo_explorer_website` (note: renamed from `regred-project` mid-project — GitHub redirects, but update the git remote to avoid the redirect notice) |
 | Pages URL | `https://regred-project.github.io/geo_explorer_website/` |
 | VPS public IP | `147.251.255.246` |
-| API hostname (via sslip.io, no DNS setup needed) | `147-251-255-246.sslip.io` |
+| API hostname | `geo-explorer.geomattr.org` (Cloudflare DNS record, **DNS only** / grey-cloud — not proxied, so Caddy handles TLS directly) |
 
 If any of these change, update: `backend/Caddyfile`, `frontend/js/app.js`
 (`API_BASE`), `backend/app/main.py` (`allow_origins`), and the default host
@@ -198,22 +206,55 @@ current Dockerfile only ever reads
 
 ## 4. TLS certificate notes
 
-Caddy obtains a Let's Encrypt certificate for `147-251-255-246.sslip.io`
-automatically on first start — no DNS setup needed, since `sslip.io`
-already resolves that hostname to the VPS's own IP.
+Caddy obtains a Let's Encrypt certificate for `geo-explorer.geomattr.org`
+automatically on first start, as long as the DNS record is **DNS only**
+(grey cloud in Cloudflare, not proxied) and ports 80/443 are actually
+reachable from the internet (§2).
+
+::: {.callout-important}
+## Why this domain instead of sslip.io, and a Cloudflare gotcha
+The API originally lived at `147-251-255-246.sslip.io` — a magic-DNS
+service that needs zero setup (the IP is embedded in the hostname). It
+worked, but **`sslip.io` is categorized as "Dynamic DNS" by common
+corporate/campus web filters** (confirmed here via a FortiGate appliance,
+which returned an explicit "Category: Dynamic DNS" block page over plain
+HTTP, and a fake `FortiGate CA`-issued certificate over HTTPS). Anyone
+browsing from a network with that kind of filter would see the site as
+broken, even though the server was fine. Moving to a real registered
+domain isn't a workaround — it just doesn't trigger that categorization.
+
+**If you point a domain at the VPS through Cloudflare**, make sure the
+record is set to **DNS only**, not **Proxied**. A proxied record resolves
+to Cloudflare's edge IPs instead of your VPS, so Let's Encrypt's HTTP-01
+challenge (and Caddy's own automatic HTTPS) will try to validate against
+Cloudflare, not your origin — Caddy's own cert issuance won't complete
+correctly. (If you *want* Cloudflare's proxy/CDN, that's a different,
+valid setup — but it means letting Cloudflare terminate TLS at its edge
+with its own certificate instead of Caddy's, e.g. Cloudflare "Full"
+mode — this project didn't need that, so it uses DNS only.)
+
+Also: DNS changes at Cloudflare take effect immediately, but *your own
+local resolver's cache* won't reflect that until its TTL expires. If a
+DNS change "isn't working," query a public resolver directly before
+assuming anything is broken:
+```bash
+dig @1.1.1.1 +short geo-explorer.geomattr.org A
+```
+:::
 
 ::: {.callout-warning}
 ## If certificate issuance stalls or the chain fails to verify for some clients
-- If ports were closed when Caddy first tried and it's now sitting in a
-  retry backoff (Caddy logs `will retry ... retrying_in: <n>`), don't wait
-  it out — force an immediate retry: `docker compose restart caddy`.
+- If ports were closed (or DNS was still pointing at Cloudflare's proxy)
+  when Caddy first tried and it's now sitting in a retry backoff (Caddy
+  logs `will retry ... retrying_in: <n>`), don't wait it out — force an
+  immediate retry: `docker compose restart caddy`.
 - Caddy's default certificate is **ECDSA**, chaining through a newer
   Let's Encrypt root. Every modern browser trusts it, but some
   older/vendored CA bundles (used by some non-browser HTTP clients) don't
   yet. For maximum compatibility this project forces RSA instead, in
   `backend/Caddyfile`:
   ```
-  147-251-255-246.sslip.io {
+  geo-explorer.geomattr.org {
       tls {
           key_type rsa2048
       }
@@ -225,13 +266,13 @@ already resolves that hostname to the VPS's own IP.
   cached cert and restarting:
   ```bash
   docker compose exec caddy rm -rf \
-    "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/147-251-255-246.sslip.io"
+    "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/geo-explorer.geomattr.org"
   docker compose restart caddy
   ```
 - To sanity-check the served chain independent of any network weirdness,
   check from the VPS itself over loopback:
   ```bash
-  echo | openssl s_client -connect localhost:443 -servername 147-251-255-246.sslip.io \
+  echo | openssl s_client -connect localhost:443 -servername geo-explorer.geomattr.org \
     2>&1 | grep -E "^Certificate chain|^ [0-9]+ s:|Verify return code"
   ```
   `Verify return code: 0 (ok)` means the chain is genuinely fine, even if
@@ -257,11 +298,11 @@ the workflow can report success while this still 404s, so check both.
 
 ```bash
 # API is reachable and has a valid cert
-curl https://147-251-255-246.sslip.io/api/tables
+curl https://geo-explorer.geomattr.org/api/tables
 
 # CORS is configured for the Pages origin
 curl -I -H "Origin: https://regred-project.github.io" \
-  https://147-251-255-246.sslip.io/api/tables | grep -i access-control
+  https://geo-explorer.geomattr.org/api/tables | grep -i access-control
 
 # Full site
 open https://regred-project.github.io/geo_explorer_website/
@@ -289,11 +330,32 @@ before assuming the deployment is broken.
    version.
 2. `./deploy.sh`
 
-The new file gets rsynced up and the container picks it up on restart —
-no image rebuild needed for data alone.
+The new file gets rsynced up and `deploy.sh` explicitly restarts the
+`fastapi` container so it picks it up — no image rebuild needed for data
+alone.
+
+::: {.callout-important}
+## Why the explicit restart matters
+`docker compose up -d --build` only recreates a container when its image
+or compose config changed — it does **not** notice that a bind-mounted
+file's *content* changed on disk, since from Compose's point of view
+nothing about the container's configuration is different. Without an
+explicit restart, `fastapi` keeps running with the DuckDB connection it
+opened at startup and silently keeps serving the *old* data indefinitely,
+even though the file on disk (and the API's own `docker compose ps`
+output) looks completely normal. `deploy.sh` runs
+`docker compose restart fastapi` after every `up -d --build` specifically
+to guard against this — if you ever deploy some other way, remember to
+restart `fastapi` yourself after a data update.
+:::
 
 ## Troubleshooting summary
 
+- **Website shows old data after updating `geographic_entities_prepared.duckdb`
+  and running `./deploy.sh`**: see the callout just above — this means
+  `fastapi` wasn't restarted. Check `docker compose ps` for its uptime; if
+  it's older than your deploy, run
+  `docker compose restart fastapi` on the VPS by hand.
 - **`./deploy.sh` hangs or asks for a password every time**: SSH key auth
   isn't set up — rerun `ssh-copy-id gortega@147.251.255.246`.
 - **Build/deploy is extremely slow or disk fills up**: confirm you're on
@@ -343,9 +405,14 @@ rsync -avz --info=progress2 \
   ./ "$VPS:$REMOTE_DIR/"
 
 echo "==> Building and restarting containers on $VPS"
-ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build"
+# `up -d --build` only recreates a container when its image or compose
+# config changed — it does NOT notice that the bind-mounted .duckdb file's
+# *content* changed, so fastapi would otherwise keep serving from its
+# already-open connection to the old data indefinitely. Always restart it
+# explicitly so data updates actually take effect.
+ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build && docker compose restart fastapi"
 
-echo "==> Done. Check: curl https://147-251-255-246.sslip.io/api/tables"
+echo "==> Done. Check: curl https://geo-explorer.geomattr.org/api/tables"
 ```
 
 `docker-compose.yml` (repo root):
@@ -406,7 +473,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 `backend/Caddyfile`:
 
 ```
-147-251-255-246.sslip.io {
+geo-explorer.geomattr.org {
 	tls {
 		key_type rsa2048
 	}

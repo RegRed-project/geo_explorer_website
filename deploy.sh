@@ -17,6 +17,11 @@ rsync -avz --info=progress2 \
   ./ "$VPS:$REMOTE_DIR/"
 
 echo "==> Building and restarting containers on $VPS"
-ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build"
+# `up -d --build` only recreates a container when its image or compose
+# config changed — it does NOT notice that the bind-mounted .duckdb file's
+# *content* changed, so fastapi would otherwise keep serving from its
+# already-open connection to the old data indefinitely. Always restart it
+# explicitly so data updates actually take effect.
+ssh "$VPS" "cd $REMOTE_DIR && docker compose up -d --build && docker compose restart fastapi"
 
 echo "==> Done. Check: curl https://geo-explorer.geomattr.org/api/tables"
