@@ -1,113 +1,171 @@
 const API_BASE = "https://geo-explorer.geomattr.org";
 
 const el = (id) => document.getElementById(id);
+
+// Placeholder hints for the per-column filter inputs.
+const PLACEHOLDERS = {
+  locationID: "e.g. MOBI_adm0_105",
+  continent: "e.g. Europe",
+  country: "e.g. France",
+  countryCode: "e.g. FR",
+  parentISO: "e.g. FI",
+  stateProvince: "e.g. Montevideo",
+  county: "e.g. Bella Unión",
+  locality: "e.g. Paillaco",
+  isCustomRegion: "Yes / No",
+  geometrySource: "e.g. GADM",
+};
+
+let columns = [];
+let idColumn = "locationID";
 let map = null;
+let mapLayer = null;
+let queryToken = 0;
 
 async function loadTables() {
   const res = await fetch(`${API_BASE}/api/tables`);
-  const { tables } = await res.json();
+  const data = await res.json();
+  columns = data.columns;
+  idColumn = data.id_column;
+
   const select = el("table_name");
   select.innerHTML = "";
-  for (const label of tables) {
+  for (const label of data.tables) {
     const opt = document.createElement("option");
     opt.value = label;
     opt.textContent = label;
     select.appendChild(opt);
   }
+  buildHeader();
+}
+
+// Filter inputs sit directly above their column header; the first column holds the map button.
+function buildHeader() {
+  const filterRow = el("filter_row");
+  const headerRow = el("header_row");
+  filterRow.innerHTML = "<th></th>";
+  headerRow.innerHTML = "<th>Map</th>";
+
+  for (const col of columns) {
+    const fth = document.createElement("th");
+    const input = document.createElement("input");
+    input.type = "search";
+    input.id = `filter_${col}`;
+    input.dataset.col = col;
+    input.placeholder = PLACEHOLDERS[col] || "";
+    input.title = "Whole-value match, case ignored (tick 'Allow partial matches' to match part of the value)";
+    input.addEventListener("keydown", onEnter);
+    fth.appendChild(input);
+    filterRow.appendChild(fth);
+
+    const th = document.createElement("th");
+    th.textContent = col;
+    headerRow.appendChild(th);
+  }
+}
+
+function onEnter(e) {
+  if (e.key === "Enter") runQuery();
 }
 
 function buildRowsURL() {
   const params = new URLSearchParams({
     table: el("table_name").value,
-    locationID: el("filter_locationID").value,
-    continent: el("filter_continent").value,
-    country: el("filter_country").value,
-    stateProvince: el("filter_stateProvince").value,
-    county: el("filter_county").value,
-    locality: el("filter_locality").value,
+    q: el("search_all").value,
+    partial: el("partial").checked,
     limit: el("row_limit").value,
   });
+  for (const input of el("filter_row").querySelectorAll("input[data-col]")) {
+    if (input.value.trim()) params.set(input.dataset.col, input.value);
+  }
   return `${API_BASE}/api/rows?${params.toString()}`;
 }
 
-function renderTable(rows) {
-  const container = el("result_table");
-  container.innerHTML = "";
-  if (rows.length === 0) return;
-
-  const table = document.createElement("table");
-  const headerRow = document.createElement("tr");
-  for (const col of Object.keys(rows[0])) {
-    const th = document.createElement("th");
-    th.textContent = col;
-    headerRow.appendChild(th);
-  }
-  table.appendChild(headerRow);
-
+function renderRows(tableLabel, rows) {
+  const body = el("result_body");
+  body.innerHTML = "";
   for (const row of rows) {
     const tr = document.createElement("tr");
-    for (const val of Object.values(row)) {
+
+    const btnTd = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "map-btn";
+    btn.textContent = "Show";
+    btn.addEventListener("click", () => openMap(tableLabel, row));
+    btnTd.appendChild(btn);
+    tr.appendChild(btnTd);
+
+    for (const col of columns) {
       const td = document.createElement("td");
-      td.textContent = val ?? "";
+      td.textContent = row[col] ?? "";
       tr.appendChild(td);
     }
-    table.appendChild(tr);
+    body.appendChild(tr);
   }
-  container.appendChild(table);
-}
-
-function clearMap() {
-  const panel = el("map_panel");
-  panel.innerHTML = "";
-  map = null;
-}
-
-async function renderMap(tableLabel, idCol, row) {
-  const panel = el("map_panel");
-  panel.innerHTML = "<h4>Polygon</h4><div class=\"leaflet-map\" id=\"leaflet-map\"></div>";
-
-  const params = new URLSearchParams({ table: tableLabel, id: row[idCol] });
-  const res = await fetch(`${API_BASE}/api/geometry?${params.toString()}`);
-  if (!res.ok) {
-    panel.innerHTML += "<p>No geometry found for this row.</p>";
-    return;
-  }
-  const { geojson } = await res.json();
-
-  map = L.map("leaflet-map");
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-  }).addTo(map);
-
-  const label = row.locality || row.country || String(row[idCol]);
-  const layer = L.geoJSON(geojson, {
-    style: { fillColor: "#3388ff", color: "#1a66cc", weight: 2, fillOpacity: 0.3 },
-  }).bindTooltip(label).addTo(map);
-
-  map.fitBounds(layer.getBounds());
 }
 
 async function runQuery() {
+  const token = ++queryToken;  // ignore responses from superseded queries
   const tableLabel = el("table_name").value;
+  el("row_count").textContent = "Querying…";
   const res = await fetch(buildRowsURL());
+  if (token !== queryToken) return;
   if (!res.ok) {
     el("row_count").textContent = `Error: ${res.status} ${res.statusText}`;
-    renderTable([]);
-    clearMap();
+    renderRows(tableLabel, []);
     return;
   }
-  const { count, id_column, rows } = await res.json();
-
-  const hint = count === 1 ? " — polygon shown below ▼" : " — filter to 1 row to show polygon";
-  el("row_count").textContent = `${count} row(s) returned${hint}`;
-  renderTable(rows);
-  clearMap();
-
-  if (count === 1) {
-    await renderMap(tableLabel, id_column, rows[0]);
-  }
+  const { count, rows } = await res.json();
+  if (token !== queryToken) return;
+  el("row_count").textContent = `${count} row(s) returned`;
+  renderRows(tableLabel, rows);
 }
+
+async function openMap(tableLabel, row) {
+  const dialog = el("map_dialog");
+  const id = row[idColumn];
+  el("map_title").textContent = `${row.locality || row.county || row.stateProvince || row.country || id} (${id})`;
+  el("map_status").textContent = "Loading polygon…";
+  dialog.showModal();
+
+  if (!map) {
+    map = L.map("leaflet-map");
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    map.setView([0, 0], 1);
+  }
+  map.invalidateSize();  // the container was hidden until showModal()
+  if (mapLayer) {
+    mapLayer.remove();
+    mapLayer = null;
+  }
+
+  const params = new URLSearchParams({ table: tableLabel, id });
+  const res = await fetch(`${API_BASE}/api/geometry?${params.toString()}`);
+  if (!res.ok) {
+    el("map_status").textContent = "No geometry found for this row.";
+    return;
+  }
+  const { geojson } = await res.json();
+  mapLayer = L.geoJSON(geojson, {
+    style: { fillColor: "#3388ff", color: "#1a66cc", weight: 2, fillOpacity: 0.3 },
+  }).addTo(map);
+  map.fitBounds(mapLayer.getBounds());
+  el("map_status").textContent = "";
+}
+
+const dialog = el("map_dialog");
+el("map_close").addEventListener("click", () => dialog.close());
+dialog.addEventListener("click", (e) => {
+  if (e.target === dialog) dialog.close();  // click on the backdrop
+});
 
 el("query_btn").addEventListener("click", runQuery);
 el("table_name").addEventListener("change", runQuery);
+el("partial").addEventListener("change", runQuery);
+el("search_all").addEventListener("keydown", onEnter);
+el("row_limit").addEventListener("keydown", onEnter);
 loadTables().then(runQuery);
