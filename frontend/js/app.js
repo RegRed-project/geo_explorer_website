@@ -55,7 +55,8 @@ function buildHeader() {
     input.id = `filter_${col}`;
     input.dataset.col = col;
     input.placeholder = PLACEHOLDERS[col] || "";
-    input.title = "Whole-value match, case ignored (tick 'Allow partial matches' to match part of the value)";
+    input.title = "Whole-value match, case ignored (tick 'Allow partial matches' to match part of the value). "
+      + "Combine values with upper-case OR / AND, e.g. France OR Spain";
     input.addEventListener("keydown", onEnter);
     fth.appendChild(input);
     filterRow.appendChild(fth);

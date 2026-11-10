@@ -14,7 +14,9 @@
     Choose a table, then search it. The wide box above the table looks for a word in any
     column and also matches part of a value. The boxes above each column filter that column: by default
     they must match the whole value (case is ignored); tick <em>Allow partial matches</em>
-    to match part of it instead. All filled-in boxes must match. Press Enter or
+    to match part of it instead. All filled-in boxes must match. Inside any box, combine
+    words with upper-case <code>OR</code> (either) and <code>AND</code> (both), e.g.
+    <code>Chile OR Peru</code>; <code>AND</code> is applied before <code>OR</code>. Press Enter or
     <em>Query</em> to run the search, <em>Reset</em> to clear all boxes, and <em>Show</em> on
     a row to see its polygon on a map. <em>Copy visible rows</em> copies the table as
     tab-separated text, ready to paste into a spreadsheet.
@@ -45,7 +47,7 @@
   </div>
 
   <input id="search_all" class="search-all" type="search"
-         placeholder="Search all columns (partial match), e.g. Chiloé">
+         placeholder="Search all columns (partial match), e.g. Chiloé  or  Chiloé OR Aysén">
 
   <div class="table-wrap">
     <table id="result_table">

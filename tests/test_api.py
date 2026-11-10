@@ -125,6 +125,56 @@ def test_column_filter_exact_vs_partial(api, con, col):
     assert all(part.lower() in r[col].lower() for r in partial["rows"])
 
 
+def _n(con, tbl, where, params):
+    return con.execute(f"SELECT count(*) FROM {tbl} WHERE {where}", params).fetchone()[0]
+
+
+ADM0 = "Countries (ADM0)"
+
+
+def test_or_in_exact_column_filter(api, con):
+    tbl = TABLES[ADM0][0]
+    a, b = [r[0] for r in con.execute(f"SELECT DISTINCT country FROM {tbl} "
+                                      f"WHERE country IS NOT NULL ORDER BY 1 LIMIT 2").fetchall()]
+    expected = _n(con, tbl, "lower(country) IN (lower(?), lower(?))", [a, b])
+    data = _rows(api, table=ADM0, country=f"{a} OR {b.upper()}", limit=2000)
+    assert data["count"] == expected and expected >= 2
+    assert {r["country"] for r in data["rows"]} == {a, b}
+
+
+def test_and_or_in_partial_column_filter(api, con):
+    tbl = TABLES[ADM0][0]
+    like = "lower(country) LIKE ?"
+    exp_and = _n(con, tbl, f"{like} AND {like}", ["%an%", "%ia%"])
+    exp_mix = _n(con, tbl, f"({like} AND {like}) OR {like}", ["%an%", "%ia%", "%chile%"])
+    assert _rows(api, table=ADM0, country="an AND ia", partial="true", limit=2000)["count"] == exp_and
+    assert _rows(api, table=ADM0, country="an AND ia OR chile", partial="true", limit=2000)["count"] == exp_mix
+    assert exp_mix > exp_and > 0
+
+
+def test_and_or_in_general_search(api, con):
+    tbl = TABLES[ADM0][0]
+    any_col = "(" + " OR ".join(f"lower(coalesce({c}, '')) LIKE ?" for c in COLUMNS) + ")"
+    k = len(COLUMNS)
+    exp_and = _n(con, tbl, f"{any_col} AND {any_col}", ["%europe%"] * k + ["%ia%"] * k)
+    exp_or = _n(con, tbl, f"{any_col} OR {any_col}", ["%chile%"] * k + ["%peru%"] * k)
+    assert _rows(api, table=ADM0, q="Europe AND ia", limit=2000)["count"] == exp_and
+    assert _rows(api, table=ADM0, q="Chile OR Peru", limit=2000)["count"] == exp_or
+    assert exp_and > 0 and exp_or >= 2
+
+
+def test_lowercase_operators_are_literal(api, con):
+    tbl = TABLES[ADM0][0]
+    expected = _n(con, tbl, "lower(country) = lower(?)", ["Bosnia and Herzegovina"])
+    assert _rows(api, table=ADM0, country="Bosnia and Herzegovina")["count"] == expected
+    assert _rows(api, table=ADM0, country="chile or peru")["count"] == 0
+
+
+def test_too_many_terms(api):
+    r = api.get("/api/rows", params={"table": ADM0, "q": " OR ".join(["x"] * 21)})
+    assert r.status_code == 400
+
+
 def test_bad_requests(api):
     assert api.get("/api/rows", params={"table": "no such table"}).status_code == 400
     assert api.get("/api/rows", params={"table": LABELS[0], "limit": 0}).status_code == 422

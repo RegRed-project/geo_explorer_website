@@ -1,5 +1,6 @@
 """Geographic Entities Explorer API — FastAPI + DuckDB."""
 import json
+import re
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +37,37 @@ def _ilike(col: str) -> str:
     return f"LOWER({col}) LIKE LOWER(?) ESCAPE '\\'"
 
 
+MAX_TERMS = 20  # per search box, to keep the generated SQL small
+_OR = re.compile(r"\s+OR\s+")
+_AND = re.compile(r"\s+AND\s+")
+
+
+def _parse_terms(val: str) -> list[list[str]]:
+    """Split a search value into OR-groups of AND-terms: 'a AND b OR c' -> [[a, b], [c]].
+
+    Only upper-case AND / OR surrounded by spaces are operators, so values such as
+    'Trinidad and Tobago' stay literal. AND binds tighter than OR; no parentheses.
+    """
+    groups = [[t.strip() for t in _AND.split(g) if t.strip()] for g in _OR.split(val.strip())]
+    groups = [g for g in groups if g]
+    if sum(len(g) for g in groups) > MAX_TERMS:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_TERMS} search terms per box")
+    return groups
+
+
+def _bool_expr(groups: list[list[str]], term_sql) -> tuple[str, list]:
+    """SQL for OR-of-AND groups; term_sql(term) returns (sql, params) for one term."""
+    or_parts, params = [], []
+    for group in groups:
+        and_parts = []
+        for term in group:
+            sql, p = term_sql(term)
+            and_parts.append(sql)
+            params.extend(p)
+        or_parts.append("(" + " AND ".join(and_parts) + ")")
+    return "(" + " OR ".join(or_parts) + ")", params
+
+
 @app.get("/api/tables")
 def list_tables():
     # All tables share the same key column, so the column list is table-independent.
@@ -56,27 +88,29 @@ def get_rows(
     - column filters: case-insensitive whole-value match, or substring match
       when `partial=true`.
     - `q`: case-insensitive substring match against any shown column.
-    All conditions are combined with AND.
+    - every value may combine terms with upper-case AND / OR (AND binds tighter).
+    All boxes are combined with AND.
     """
     tbl, id_col = _resolve_table(table)
     cols = [id_col] + DISPLAY_COLS
 
+    def add(groups, term_sql):
+        if groups:
+            sql, p = _bool_expr(groups, term_sql)
+            conds.append(sql)
+            params.extend(p)
+
     conds, params = [], []
     for col in cols:
-        val = request.query_params.get(col, "").strip()
-        if not val:
-            continue
+        groups = _parse_terms(request.query_params.get(col, ""))
         if partial:
-            conds.append(_ilike(col))
-            params.append(_like_pattern(val))
+            add(groups, lambda t, col=col: (_ilike(col), [_like_pattern(t)]))
         else:
-            conds.append(f"LOWER({col}) = LOWER(?)")
-            params.append(val)
+            add(groups, lambda t, col=col: (f"LOWER({col}) = LOWER(?)", [t]))
 
-    q = q.strip()
-    if q:
-        conds.append("(" + " OR ".join(_ilike(c) for c in cols) + ")")
-        params.extend([_like_pattern(q)] * len(cols))
+    # Each general-search term may match in any column.
+    add(_parse_terms(q),
+        lambda t: ("(" + " OR ".join(_ilike(c) for c in cols) + ")", [_like_pattern(t)] * len(cols)))
 
     where = f"WHERE {' AND '.join(conds)}" if conds else ""
 
