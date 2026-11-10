@@ -131,6 +131,48 @@ def test_map_popup(page, sample):
     assert not page.errors, page.errors
 
 
+def test_layout_order(page):
+    top = lambda sel: page.locator(sel).bounding_box()["y"]
+    controls = max(top(s) for s in ("#table_name", "#row_limit", "#partial", "#query_btn", "#reset_btn"))
+    assert controls < top("#row_count") < top("#search_all") < top("#result_table")
+    q, r = page.locator("#query_btn").bounding_box(), page.locator("#reset_btn").bounding_box()
+    assert abs(q["y"] - r["y"]) < 2 and r["x"] > q["x"], "Reset is not next to Query"
+
+
+def test_reset(page):
+    n_default = _count(page.text_content("#row_count"))  # initial load: first table, defaults
+    page.select_option("#table_name", list(TABLES)[-1])
+    page.wait_for_function(DONE)
+    page.fill("#search_all", "x")
+    page.fill("#row_limit", "5")
+    page.fill("#filter_country", "zz-no-such-country")
+    page.check("#partial")
+    page.wait_for_function(DONE)
+    assert _count(_query(page, lambda: page.click("#reset_btn"))) == n_default
+    assert page.input_value("#table_name") == list(TABLES)[0]
+    assert page.input_value("#search_all") == "" and page.input_value("#filter_country") == ""
+    assert page.input_value("#row_limit") == "200" and not page.is_checked("#partial")
+    assert not page.errors, page.errors
+
+
+def test_copy_visible_rows(page, base_url):
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base_url)
+    n = page.locator("#result_body tr").count()
+    assert n >= 1 and page.is_enabled("#copy_btn")
+    page.click("#copy_btn")
+    page.wait_for_function("() => document.getElementById('copy_btn').textContent.startsWith('Copied')")
+    lines = page.evaluate("navigator.clipboard.readText()").rstrip("\n").split("\n")
+    assert lines[0].split("\t") == COLUMNS
+    assert len(lines) == n + 1
+    first = page.eval_on_selector_all("#result_body tr:first-child td", "els => els.slice(1).map(e => e.textContent)")
+    assert lines[1].split("\t") == first
+
+    page.fill("#filter_country", "zz-no-such-country")
+    _query(page, lambda: page.press("#filter_country", "Enter"))
+    assert page.is_disabled("#copy_btn")
+    assert not page.errors, page.errors
+
+
 def test_no_horizontal_page_scroll_on_phone(page):
     page.set_viewport_size({"width": 390, "height": 800})
     assert not page.evaluate("document.documentElement.scrollWidth > window.innerWidth")

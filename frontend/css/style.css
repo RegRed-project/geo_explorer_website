@@ -39,7 +39,6 @@ body {
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.75rem 1.25rem;
-  margin-top: 0.75rem;
 }
 
 .controls label {
@@ -65,14 +64,50 @@ body {
 
 .controls input[type="number"] { width: 7rem; }
 
-.controls button {
+.controls .buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.controls button,
+.results-head button {
   padding: 0.45rem 1.5rem;
   background: #0d6efd;
   color: #fff;
-  border: none;
+  border: 1px solid #0d6efd;
   border-radius: 4px;
   cursor: pointer;
 }
+
+.controls button.secondary,
+.results-head button.secondary {
+  background: #fff;
+  color: #0d6efd;
+}
+
+.controls button.secondary:hover,
+.results-head button.secondary:hover:not(:disabled) { background: #e7f1ff; }
+
+.results-head button:disabled {
+  border-color: #adb5bd;
+  color: #adb5bd;
+  cursor: default;
+}
+
+.results-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.results-head p { margin: 0; }
+
+.results-head button { padding: 0.35rem 1rem; }
+
+.content .search-all { margin-bottom: 0.75rem; }
 
 .hint {
   color: #6c757d;

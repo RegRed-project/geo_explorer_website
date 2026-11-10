@@ -11,15 +11,14 @@
 <header class="topbar">
   <h1>Geographic Entities Explorer</h1>
   <p class="intro">
-    Choose a table, then search it. The wide box below looks for a word in any column and
-    also matches part of a value. The boxes above each column filter that column: by default
+    Choose a table, then search it. The wide box above the table looks for a word in any
+    column and also matches part of a value. The boxes above each column filter that column: by default
     they must match the whole value (case is ignored); tick <em>Allow partial matches</em>
     to match part of it instead. All filled-in boxes must match. Press Enter or
-    <em>Query</em> to run the search, and <em>Show</em> on a row to see its polygon on a map.
+    <em>Query</em> to run the search, <em>Reset</em> to clear all boxes, and <em>Show</em> on
+    a row to see its polygon on a map. <em>Copy visible rows</em> copies the table as
+    tab-separated text, ready to paste into a spreadsheet.
   </p>
-
-  <input id="search_all" class="search-all" type="search"
-         placeholder="Search all columns (partial match), e.g. Chiloé">
 
   <div class="controls">
     <label>Table
@@ -32,12 +31,22 @@
       <input id="partial" type="checkbox">
       Allow partial matches
     </label>
-    <button id="query_btn" type="button">Query</button>
+    <div class="buttons">
+      <button id="query_btn" type="button">Query</button>
+      <button id="reset_btn" type="button" class="secondary">Reset</button>
+    </div>
   </div>
 </header>
 
 <main class="content">
-  <p id="row_count"></p>
+  <div class="results-head">
+    <p id="row_count"></p>
+    <button id="copy_btn" type="button" class="secondary" disabled>Copy visible rows</button>
+  </div>
+
+  <input id="search_all" class="search-all" type="search"
+         placeholder="Search all columns (partial match), e.g. Chiloé">
+
   <div class="table-wrap">
     <table id="result_table">
       <thead>

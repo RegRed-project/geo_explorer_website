@@ -21,6 +21,8 @@ let idColumn = "locationID";
 let map = null;
 let mapLayer = null;
 let queryToken = 0;
+let visibleRows = [];
+const DEFAULT_ROW_LIMIT = "200";
 
 async function loadTables() {
   const res = await fetch(`${API_BASE}/api/tables`);
@@ -82,6 +84,8 @@ function buildRowsURL() {
 }
 
 function renderRows(tableLabel, rows) {
+  visibleRows = rows;
+  el("copy_btn").disabled = rows.length === 0;
   const body = el("result_body");
   body.innerHTML = "";
   for (const row of rows) {
@@ -120,6 +124,52 @@ async function runQuery() {
   if (token !== queryToken) return;
   el("row_count").textContent = `${count} row(s) returned`;
   renderRows(tableLabel, rows);
+}
+
+// Back to the initial state: first table, empty boxes, default row limit, exact matching.
+function resetForm() {
+  el("table_name").selectedIndex = 0;
+  el("search_all").value = "";
+  el("row_limit").value = DEFAULT_ROW_LIMIT;
+  el("partial").checked = false;
+  for (const input of el("filter_row").querySelectorAll("input[data-col]")) input.value = "";
+  runQuery();
+}
+
+// Tab-separated values with a header line; tabs and line breaks inside cells become spaces.
+function rowsToTSV(rows) {
+  const clean = (v) => String(v ?? "").replace(/[\t\r\n]+/g, " ");
+  const lines = [columns.join("\t")];
+  for (const row of rows) lines.push(columns.map((c) => clean(row[c])).join("\t"));
+  return lines.join("\n") + "\n";
+}
+
+async function writeClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");  // fallback for non-secure contexts
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("copy command failed");
+}
+
+async function copyVisibleRows() {
+  const btn = el("copy_btn");
+  const label = "Copy visible rows";
+  try {
+    await writeClipboard(rowsToTSV(visibleRows));
+    btn.textContent = `Copied ${visibleRows.length} row(s)`;
+  } catch {
+    btn.textContent = "Copy failed";
+  }
+  setTimeout(() => { btn.textContent = label; }, 2000);
 }
 
 async function openMap(tableLabel, row) {
@@ -164,6 +214,8 @@ dialog.addEventListener("click", (e) => {
 });
 
 el("query_btn").addEventListener("click", runQuery);
+el("reset_btn").addEventListener("click", resetForm);
+el("copy_btn").addEventListener("click", copyVisibleRows);
 el("table_name").addEventListener("change", runQuery);
 el("partial").addEventListener("change", runQuery);
 el("search_all").addEventListener("keydown", onEnter);
