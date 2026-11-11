@@ -9,21 +9,26 @@
 </head>
 <body>
 <header class="topbar">
-  <h1>Geographic Entities Explorer</h1>
-  <p class="intro">
-    Choose a table, then search it. The wide box above the table looks for a word in any
-    column and also matches part of a value. The boxes above each column filter that column: by default
-    they must match the whole value (case is ignored); tick <em>Allow partial matches</em>
-    to match part of it instead. All filled-in boxes must match. Inside any box, combine
-    words with upper-case <code>OR</code> (either) and <code>AND</code> (both), e.g.
-    <code>Chile OR Peru</code>; <code>AND</code> is applied before <code>OR</code>. Press Enter or
-    <em>Query</em> to run the search, <em>Reset</em> to clear all boxes, and <em>Show</em> on
-    a row to see its polygon on a map. <em>Copy visible rows</em> copies the table as
-    tab-separated text, ready to paste into a spreadsheet.
-  </p>
+  <div class="titlebar">
+    <img class="logo" src="img/regred-logo-inverted.svg" alt="RegRed">
+    <h1>Geographic Entities Explorer</h1>
+  </div>
+  <ul class="intro">
+    <p><b>This tool lets you explore the geographic entities in the RegRed database.</b></p>
+    <li>Choose a table, then search it.</li>
+    <li>The wide box above the table looks for a word in any column and also matches part of a value.</li>
+    <li>The boxes above each column filter that column: by default they must match the whole value
+      (case is ignored); tick <em>Allow partial matches</em> to match part of it instead.</li>
+    <li>All filled-in boxes must match.</li>
+    <li>Inside any box, combine words with upper-case <code>OR</code> (either) and <code>AND</code> (both),
+      e.g. <code>Prague OR Paysandú OR Valdivia</code>; <code>AND</code> is applied before <code>OR</code>.</li>
+    <li>Press Enter or <em>Query</em> to run the search, and <em>Reset</em> to clear all boxes.</li>
+    <li><em>Press Show</em> on a row to display the map.</li>
+    <li><em>Copy visible rows</em> copies the table as tab-separated text, ready to paste into a spreadsheet.</li>
+  </ul>
 
   <div class="controls">
-    <label>Table
+    <label>Select table
       <select id="table_name"></select>
     </label>
     <label>Max rows
