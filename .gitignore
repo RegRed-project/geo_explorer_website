@@ -16,3 +16,4 @@ logs/
 # Editors / OS
 .DS_Store
 RegRed_TEMP
+backend/geo_explorer_dbt_project.code-workspace
