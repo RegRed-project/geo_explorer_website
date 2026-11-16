@@ -67,7 +67,9 @@ def test_general_search_matches_sql(api, con, label):
     row = _sample_row(con, tbl)
     term = next((row[c] for c in ("locality", "county", "stateProvince", "country")
                  if row[c] and row[c].strip()), row[ID_COL])
-    term = term.strip()[:6]
+    # Trimmed again after the cut: the API strips search terms, so a term
+    # ending in a space (e.g. "McKay ") would make the two counts differ
+    term = term.strip()[:6].strip()
     any_col = " OR ".join(f"contains(lower({c}), lower(?))" for c in COLUMNS)
     expected = con.execute(f"SELECT count(*) FROM (SELECT 1 FROM {tbl} WHERE {any_col} LIMIT 2000)",
                            [term] * len(COLUMNS)).fetchone()[0]

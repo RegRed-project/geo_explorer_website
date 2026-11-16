@@ -218,3 +218,68 @@ body {
   height: min(560px, 70vh);
   width: 100%;
 }
+
+.attribution {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+}
+
+.attribution h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.attribution .sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.attribution .source {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.attribution .source p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #495057;
+  overflow-wrap: anywhere;
+}
+
+.attribution .source-logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 7.5rem;
+  height: 3rem;
+  border-radius: 4px;
+}
+
+.attribution .source-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+}
+
+/* The Protected Planet logo is white artwork made for dark backgrounds. */
+.attribution .source-logo.dark {
+  background: #000;
+  padding: 0.5rem;
+}
+
+/* Global Islands has no logo of its own (the USGS identifier needs written permission). */
+.attribution .source-logo.text {
+  border: 1px solid #adb5bd;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #212529;
+  text-decoration: none;
+  text-align: center;
+}
