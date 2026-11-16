@@ -140,16 +140,15 @@ def test_layout_order(page):
 
 
 def test_reset(page):
-    n_default = _count(page.text_content("#row_count"))  # initial load: first table, defaults
-    page.select_option("#table_name", list(TABLES)[-1])
-    page.wait_for_function(DONE)
+    label = list(TABLES)[-1]
+    n_default = _count(_query(page, lambda: page.select_option("#table_name", label)))  # that table, defaults
     page.fill("#search_all", "x")
     page.fill("#row_limit", "5")
     page.fill("#filter_country", "zz-no-such-country")
     page.check("#partial")
     page.wait_for_function(DONE)
     assert _count(_query(page, lambda: page.click("#reset_btn"))) == n_default
-    assert page.input_value("#table_name") == list(TABLES)[0]
+    assert page.input_value("#table_name") == label  # Reset keeps the selected table
     assert page.input_value("#search_all") == "" and page.input_value("#filter_country") == ""
     assert page.input_value("#row_limit") == "200" and not page.is_checked("#partial")
     assert not page.errors, page.errors

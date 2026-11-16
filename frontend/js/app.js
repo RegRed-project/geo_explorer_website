@@ -127,9 +127,8 @@ async function runQuery() {
   renderRows(tableLabel, rows);
 }
 
-// Back to the initial state: first table, empty boxes, default row limit, exact matching.
+// Clear the query but keep the selected table: empty boxes, default row limit, exact matching.
 function resetForm() {
-  el("table_name").selectedIndex = 0;
   el("search_all").value = "";
   el("row_limit").value = DEFAULT_ROW_LIMIT;
   el("partial").checked = false;
